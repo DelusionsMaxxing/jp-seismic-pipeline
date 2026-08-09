@@ -16,7 +16,12 @@ from datetime import UTC, date, datetime, timedelta
 import psycopg
 
 from .config import DatabaseConfig, MonitoringConfig
-from .extract import build_session, fetch_events, iter_backfill_windows
+from .extract import (
+    build_session,
+    fetch_events,
+    iter_backfill_windows,
+    max_magnitude,
+)
 from .load import load_events
 from .metrics import IngestRun, publish_ingest_run
 
@@ -45,6 +50,7 @@ def ingest(
     rows_read = 0
     rows_written = 0
     rows_rejected = 0
+    strongest: float | None = None
     succeeded = False
 
     try:
@@ -54,6 +60,15 @@ def ingest(
             ):
                 features = fetch_events(window_start, window_end, session=session)
                 rows_read += len(features)
+
+                window_max = max_magnitude(features)
+                if window_max is not None:
+                    # Compared against None explicitly: USGS reports magnitudes
+                    # of zero and below for the smallest events, and a
+                    # truthiness check would discard them.
+                    strongest = (
+                        window_max if strongest is None else max(strongest, window_max)
+                    )
 
                 result = load_events(conn, features, source=source)
                 rows_written += result.written
@@ -70,6 +85,7 @@ def ingest(
                 rows_rejected=rows_rejected,
                 duration_seconds=time.monotonic() - started,
                 succeeded=succeeded,
+                max_magnitude=strongest,
             ),
             monitoring,
             source=source,

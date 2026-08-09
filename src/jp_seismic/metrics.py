@@ -29,6 +29,9 @@ class IngestRun:
     rows_rejected: int
     duration_seconds: float
     succeeded: bool
+    # None when the window held no event carrying a magnitude, which is a
+    # normal quiet day rather than a failure.
+    max_magnitude: float | None = None
 
 
 def publish_ingest_run(
@@ -76,6 +79,13 @@ def publish_ingest_run(
         "1 if the last run completed, 0 if it raised.",
         float(run.succeeded),
     )
+    if run.max_magnitude is not None:
+        gauge(
+            "jp_seismic_ingest_max_magnitude",
+            "Largest magnitude among the events loaded by the last run.",
+            run.max_magnitude,
+        )
+
     if run.succeeded:
         # Only advanced on success, so staleness alerts measure time since the
         # last *good* run rather than time since the last attempt.

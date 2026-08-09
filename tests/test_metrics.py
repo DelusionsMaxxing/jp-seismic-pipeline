@@ -14,6 +14,7 @@ def run() -> IngestRun:
         rows_rejected=2,
         duration_seconds=4.5,
         succeeded=True,
+        max_magnitude=6.4,
     )
 
 
@@ -26,7 +27,7 @@ def test_publish_ingest_run_without_a_gateway_pushes_nothing(monkeypatch, run):
     publish_ingest_run(run, MonitoringConfig(pushgateway_url=None, job_name="ingest"))
 
 
-def test_publish_ingest_run_pushes_the_four_run_numbers(monkeypatch, run):
+def test_publish_ingest_run_pushes_every_run_metric(monkeypatch, run):
     pushed = {}
 
     def capture(url, *, job, registry, grouping_key):
@@ -52,6 +53,32 @@ def test_publish_ingest_run_pushes_the_four_run_numbers(monkeypatch, run):
     assert registry.get_sample_value("jp_seismic_ingest_rows_rejected") == 2
     assert registry.get_sample_value("jp_seismic_ingest_duration_seconds") == 4.5
     assert registry.get_sample_value("jp_seismic_ingest_last_run_success") == 1
+    assert registry.get_sample_value("jp_seismic_ingest_max_magnitude") == 6.4
+
+
+def test_publish_ingest_run_omits_max_magnitude_on_a_quiet_window(monkeypatch):
+    pushed = {}
+    monkeypatch.setattr(
+        "jp_seismic.metrics.push_to_gateway",
+        lambda url, *, job, registry, grouping_key: pushed.update(registry=registry),
+    )
+
+    publish_ingest_run(
+        IngestRun(
+            rows_read=0,
+            rows_written=0,
+            rows_rejected=0,
+            duration_seconds=0.2,
+            succeeded=True,
+        ),
+        MonitoringConfig(pushgateway_url="http://gw:9091", job_name="ingest"),
+    )
+
+    # Publishing a zero would read as "an M0 event happened" and would stick
+    # around as the last known value until the next run overwrote it.
+    assert (
+        pushed["registry"].get_sample_value("jp_seismic_ingest_max_magnitude") is None
+    )
 
 
 def test_publish_ingest_run_omits_success_timestamp_when_the_run_failed(monkeypatch):

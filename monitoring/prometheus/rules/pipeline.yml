@@ -48,6 +48,23 @@ groups:
             change, not a transient error — inspect the warning logs for the
             offending payloads.
 
+  - name: jp-seismic-data
+    rules:
+      # A signal about the data, not about the pipeline. It fires hours after
+      # the event: ingest runs once a day at 03:00 UTC, so this is a "the last
+      # window contained something notable" flag for whoever reads the marts.
+      # It is NOT an earthquake early warning and must never be presented as
+      # one — for that, use JMA's own emergency channels.
+      - alert: SeismicStrongEventIngested
+        expr: jp_seismic_ingest_max_magnitude >= 6
+        labels:
+          severity: warning
+        annotations:
+          summary: "Last ingest window contained an M{{ $value }} event"
+          description: >-
+            Delivered on the pipeline's daily schedule, hours after the event
+            itself. Open the analytics dashboard for where and how deep.
+
   - name: jp-seismic-infrastructure
     rules:
       - alert: SeismicWarehouseUnreachable

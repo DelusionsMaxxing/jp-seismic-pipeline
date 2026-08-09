@@ -147,6 +147,11 @@ docker compose exec airflow-scheduler \
     airflow dags backfill jp_seismic_daily -s 2024-01-01 -e 2024-04-01
 ```
 
+`dags/` and `dbt/` are bind-mounted, so edits there take effect on the next DAG
+parse. `src/` is not — it is copied into the image and installed there — so a
+change to the Python package needs `docker compose build` before the containers
+run it.
+
 ### Without Docker
 
 ```bash
