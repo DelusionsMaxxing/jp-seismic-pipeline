@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +25,9 @@ jobs:
 
       - name: Install package
         run: pip install -e ".[dev]"
+
+      - name: Ruff format
+        run: ruff format --check .
 
       - name: Ruff
         run: ruff check src tests dags
@@ -93,3 +97,34 @@ jobs:
       - name: dbt build (incremental re-run)
         working-directory: dbt
         run: dbt build --target dev
+
+  monitoring:
+    name: Validate monitoring config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A malformed alert rule is only discovered when Prometheus refuses to
+      # start, which is exactly when you need it most.
+      - name: promtool check config and rules
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            --entrypoint promtool prom/prometheus:v2.55.1 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: amtool check-config
+        run: |
+          docker run --rm -v "$PWD/monitoring/alertmanager:/etc/alertmanager:ro" \
+            --entrypoint amtool prom/alertmanager:v0.28.0 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Dashboards parse as JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in sorted(Path("monitoring/grafana/dashboards").glob("*.json")):
+              json.loads(path.read_text(encoding="utf-8"))
+              print(f"ok {path}")
+          PY
