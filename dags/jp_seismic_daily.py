@@ -12,9 +12,14 @@ from datetime import timedelta
 
 import pendulum
 from airflow.decorators import dag, task
+from airflow.models.baseoperator import chain
 from airflow.operators.bash import BashOperator
 
 DBT_DIR = os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt")
+
+# The dbt layers, in dependency order. One task each, so a red task in the grid
+# names the layer that broke instead of "the transformation failed".
+DBT_LAYERS = ("staging", "intermediate", "marts")
 
 # dbt writes compiled artefacts into the project dir, which is read-only when
 # mounted from the host, so redirect them somewhere writable.
@@ -38,6 +43,18 @@ default_args = {
     # that hangs on a socket holds its slot until somebody notices by hand.
     "execution_timeout": timedelta(minutes=15),
 }
+
+
+def build_layer(layer: str) -> BashOperator:
+    """Build one dbt layer and run its tests before the next layer starts."""
+    return BashOperator(
+        task_id=f"build_{layer}_models",
+        bash_command=(
+            f"cd {DBT_DIR} && dbt build --target dev --select path:models/{layer}"
+        ),
+        env=DBT_ENV,
+        append_env=True,
+    )
 
 
 @dag(
@@ -67,21 +84,10 @@ def jp_seismic_daily() -> None:
             end=data_interval_end.date(),
         )
 
-    dbt_run = BashOperator(
-        task_id="dbt_run",
-        bash_command=f"cd {DBT_DIR} && dbt run --target dev",
-        env=DBT_ENV,
-        append_env=True,
-    )
-
-    dbt_test = BashOperator(
-        task_id="dbt_test",
-        bash_command=f"cd {DBT_DIR} && dbt test --target dev",
-        env=DBT_ENV,
-        append_env=True,
-    )
-
-    ingest_events() >> dbt_run >> dbt_test
+    # `build` rather than `run` then `test`: each layer's tests run against the
+    # layer that just built, so a broken staging assumption stops the run before
+    # the marts are built on top of it.
+    chain(ingest_events(), *[build_layer(layer) for layer in DBT_LAYERS])
 
 
 jp_seismic_daily()
