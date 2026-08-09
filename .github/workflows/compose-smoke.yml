@@ -70,6 +70,50 @@ jobs:
           echo "::error::the Airflow scheduler never reported a healthy job"
           exit 1
 
+      # The DAG is unpaused on creation, so the scheduler starts a real run
+      # within seconds of `make up` — one that calls USGS. Pausing it keeps
+      # this job off the network and makes the smoke run the only process
+      # building the marts; two dbt runs racing each other collide on the
+      # table materialisations. `dags pause` failing is itself a signal: it
+      # means the scheduler never parsed and registered the DAG.
+      - name: Pause the DAG so the smoke run owns the warehouse
+        run: |
+          paused=0
+          for attempt in $(seq 1 24); do
+            if docker compose exec -T airflow-scheduler \
+                airflow dags pause jp_seismic_daily; then
+              paused=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "${paused}" != "1" ]; then
+            echo "::error::jp_seismic_daily never registered with the scheduler"
+            exit 1
+          fi
+
+          # Pausing stops further scheduling but not a task already in flight,
+          # so drain whatever the automatic run started before proceeding.
+          run_id="$(docker compose exec -T airflow-scheduler \
+            airflow dags list-runs -d jp_seismic_daily --output json \
+            | jq -r 'first(.[].run_id) // empty')"
+          if [ -z "${run_id}" ]; then
+            echo "no automatic run to drain"
+            exit 0
+          fi
+          for attempt in $(seq 1 30); do
+            active="$(docker compose exec -T airflow-scheduler \
+              airflow tasks states-for-dag-run jp_seismic_daily "${run_id}" --output json \
+              | jq '[.[] | select(.state == "running" or .state == "queued")] | length')"
+            echo "run ${run_id}: ${active} task(s) still in flight"
+            if [ "${active}" = "0" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::the automatic DAG run never stopped working"
+          exit 1
+
       # The regression test for the bind-mount bug. dbt compiles nothing
       # without dbt_utils, so an empty or shadowed dbt_packages fails every
       # transformation task the moment the DAG first runs.
