@@ -1,11 +1,4 @@
-"""Prometheus metrics describing a single ingest run.
-
-Ingest is a short-lived batch job: it exits long before Prometheus would get
-round to scraping it, so a run's numbers are pushed to a Pushgateway instead
-of being exposed on a port. The push is optional — with ``PUSHGATEWAY_URL``
-unset every helper here is a no-op, so tests, CI and a laptop run behave
-exactly as they did before the monitoring stack existed.
-"""
+"""Prometheus metrics describing a single ingest run."""
 
 from __future__ import annotations
 
@@ -19,19 +12,70 @@ from .config import MonitoringConfig
 
 logger = logging.getLogger(__name__)
 
+METRIC_PREFIX = "jp_seismic_ingest_"
+
 
 @dataclass(frozen=True, slots=True)
 class IngestRun:
-    """The four numbers every run reports, plus whether it finished."""
-
     rows_read: int
     rows_written: int
     rows_rejected: int
     duration_seconds: float
     succeeded: bool
-    # None when the window held no event carrying a magnitude, which is a
-    # normal quiet day rather than a failure.
+    # None on a window that held no event carrying a magnitude - a quiet day,
+    # not a failure. Publishing 0.0 instead would read as an M0 event.
     max_magnitude: float | None = None
+
+
+def _registry_for(run: IngestRun) -> CollectorRegistry:
+    registry = CollectorRegistry()
+
+    def gauge(name: str, documentation: str, value: float) -> None:
+        Gauge(METRIC_PREFIX + name, documentation, registry=registry).set(value)
+
+    gauge(
+        "rows_read",
+        "Events returned by the source API during the last run.",
+        run.rows_read,
+    )
+    gauge(
+        "rows_written",
+        "Rows upserted into raw.earthquake_events during the last run.",
+        run.rows_written,
+    )
+    gauge(
+        "rows_rejected",
+        "Features discarded during the last run for carrying no id.",
+        run.rows_rejected,
+    )
+    gauge(
+        "duration_seconds",
+        "Wall-clock duration of the last run.",
+        run.duration_seconds,
+    )
+    gauge(
+        "last_run_success",
+        "1 if the last run completed, 0 if it raised.",
+        float(run.succeeded),
+    )
+
+    if run.max_magnitude is not None:
+        gauge(
+            "max_magnitude",
+            "Largest magnitude among the events loaded by the last run.",
+            run.max_magnitude,
+        )
+
+    if run.succeeded:
+        # Advanced only by a run that finished, so staleness alerts measure
+        # time since the last good run rather than the last attempt.
+        gauge(
+            "last_success_timestamp_seconds",
+            "Unix time at which the last successful run finished.",
+            time.time(),
+        )
+
+    return registry
 
 
 def publish_ingest_run(
@@ -39,72 +83,21 @@ def publish_ingest_run(
     config: MonitoringConfig,
     source: str = "usgs",
 ) -> None:
-    """Push one run's metrics to the Pushgateway, or do nothing if unconfigured.
-
-    ``source`` becomes a grouping key so a later run replaces the previous
-    values rather than accumulating a new series per run — the gateway holds
-    the last known state of each job, not a history.
-    """
     if config.pushgateway_url is None:
         logger.debug("no pushgateway configured; skipping metric push")
         return
 
-    registry = CollectorRegistry()
-
-    def gauge(name: str, documentation: str, value: float) -> None:
-        Gauge(name, documentation, registry=registry).set(value)
-
-    gauge(
-        "jp_seismic_ingest_rows_read",
-        "Events returned by the source API during the last run.",
-        run.rows_read,
-    )
-    gauge(
-        "jp_seismic_ingest_rows_written",
-        "Rows upserted into raw.earthquake_events during the last run.",
-        run.rows_written,
-    )
-    gauge(
-        "jp_seismic_ingest_rows_rejected",
-        "Features discarded during the last run because they carried no id.",
-        run.rows_rejected,
-    )
-    gauge(
-        "jp_seismic_ingest_duration_seconds",
-        "Wall-clock duration of the last run.",
-        run.duration_seconds,
-    )
-    gauge(
-        "jp_seismic_ingest_last_run_success",
-        "1 if the last run completed, 0 if it raised.",
-        float(run.succeeded),
-    )
-    if run.max_magnitude is not None:
-        gauge(
-            "jp_seismic_ingest_max_magnitude",
-            "Largest magnitude among the events loaded by the last run.",
-            run.max_magnitude,
-        )
-
-    if run.succeeded:
-        # Only advanced on success, so staleness alerts measure time since the
-        # last *good* run rather than time since the last attempt.
-        gauge(
-            "jp_seismic_ingest_last_success_timestamp_seconds",
-            "Unix time at which the last successful run finished.",
-            time.time(),
-        )
-
     try:
+        # source is a grouping key, so a later run replaces the previous values
+        # instead of leaving a new series behind for every run ever made.
         push_to_gateway(
             config.pushgateway_url,
             job=config.job_name,
-            registry=registry,
+            registry=_registry_for(run),
             grouping_key={"source": source},
         )
     except OSError as exc:
-        # Monitoring must never take the pipeline down with it: a gateway that
-        # is unreachable is a monitoring outage, not an ingest failure.
+        # A gateway that is down is a monitoring outage, not an ingest failure.
         logger.warning("could not push metrics to %s: %s", config.pushgateway_url, exc)
     else:
         logger.info(

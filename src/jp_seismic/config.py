@@ -26,8 +26,6 @@ REQUEST_TIMEOUT_SECONDS = 30
 
 @dataclass(frozen=True, slots=True)
 class MonitoringConfig:
-    """Where a run publishes its metrics, if anywhere."""
-
     pushgateway_url: str | None
     job_name: str
 
@@ -45,8 +43,6 @@ class MonitoringConfig:
 
 @dataclass(frozen=True)
 class DatabaseConfig:
-    """Connection details for the warehouse Postgres instance."""
-
     host: str
     port: int
     user: str
