@@ -1,0 +1,297 @@
+{
+  "uid": "jp-seismic-analytics",
+  "title": "JP Seismic — Analytics",
+  "description": "Exploration of the modelled seismic events themselves: where they happen, how strong, how deep, and how that moves over time. Reads the marts through the read-only role.",
+  "tags": ["seismic", "analytics"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "5m",
+  "time": { "from": "now-90d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "region",
+        "label": "Region",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+        "multi": true,
+        "includeAll": true,
+        "refresh": 1,
+        "query": "select region_name from analytics_marts.dim_region union all select '(no region)' order by 1",
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "min_mag",
+        "label": "Min magnitude",
+        "type": "custom",
+        "query": "0,3,4,5,6",
+        "current": { "text": "0", "value": "0" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Events in range",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select count(*) as events from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Strongest event",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select max(f.magnitude) as max_magnitude from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 6.5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Potentially damaging",
+      "description": "Events the intermediate layer flags as potentially damaging — the definition lives in int_earthquakes_enriched, not in this panel.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select count(*) filter (where f.is_potentially_damaging) as damaging from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Tsunami flagged",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select count(*) filter (where f.has_tsunami_flag) as tsunami from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 5,
+      "type": "geomap",
+      "title": "Epicentres",
+      "description": "One point per event. Size follows magnitude, so a swarm of small events reads differently from a single strong one.",
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select f.latitude, f.longitude, f.magnitude, f.depth_km, f.place_raw from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag and f.latitude is not null"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "view": { "id": "coords", "lat": 36, "lon": 138, "zoom": 4 },
+        "basemap": { "type": "default", "name": "Basemap" },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Events",
+            "config": {
+              "size": { "field": "magnitude", "min": 3, "max": 18 },
+              "color": { "field": "depth_km" },
+              "showLegend": true
+            },
+            "location": { "mode": "auto" }
+          }
+        ],
+        "tooltip": { "mode": "details" }
+      }
+    },
+    {
+      "id": 6,
+      "type": "piechart",
+      "title": "By magnitude band",
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select f.magnitude_band, count(*) as events from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag group by 1 order by 2 desc"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": true },
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "pieType": "donut"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Magnitude over time",
+      "description": "Max against median per JST day: a rising max with a flat median is one notable event, both rising is a genuinely more active period.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select f.occurred_on_jst::timestamptz as time, max(f.magnitude) as max_magnitude, (percentile_cont(0.5) within group (order by f.magnitude))::numeric as median_magnitude from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag group by 1 order by 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "custom": { "drawStyle": "line", "fillOpacity": 8, "lineWidth": 2, "showPoints": "always", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "xychart",
+      "title": "Depth against magnitude",
+      "description": "Shallow strong events are the damaging ones — that is the corner of this plot worth watching.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select f.magnitude, f.depth_km from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag and f.depth_km is not null and f.magnitude is not null"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "show": "points", "pointSize": { "fixed": 6 } } },
+        "overrides": []
+      },
+      "options": {
+        "mapping": "auto",
+        "series": [{ "x": { "matcher": { "id": "byName", "options": "magnitude" } }, "y": { "matcher": { "id": "byName", "options": "depth_km" } } }],
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+        "tooltip": { "mode": "single" }
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Regions ranked",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select coalesce(r.region_name, '(no region)') as region, count(*) as events, round(max(f.magnitude), 1) as max_magnitude, round(avg(f.depth_km), 1) as avg_depth_km, count(*) filter (where f.is_potentially_damaging) as damaging from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag group by 1 order by 2 desc limit 25"
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "events", "desc": true }] }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Notable events",
+      "description": "Strongest first. usgs_url opens the official event page for anything worth checking by hand.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "postgres", "uid": "seismic-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "select f.occurred_at, f.place_raw as place, f.magnitude, f.depth_km, f.review_status, f.usgs_url from analytics_marts.fct_earthquakes f left join analytics_marts.dim_region r on f.region_key = r.region_key where $__timeFilter(f.occurred_at) and coalesce(r.region_name, '(no region)') in (${region:sqlstring}) and coalesce(f.magnitude, -1) >= $min_mag order by f.magnitude desc nulls last, f.occurred_at desc limit 50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "usgs_url" },
+            "properties": [{ "id": "custom.cellOptions", "value": { "type": "auto" } }]
+          }
+        ]
+      },
+      "options": { "showHeader": true }
+    }
+  ]
+}

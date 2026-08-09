@@ -4,3 +4,6 @@ requests==2.32.3
 psycopg[binary]==3.2.3
 dbt-core==1.8.9
 dbt-postgres==1.8.2
+# Airflow only emits StatsD metrics when this client is present in the image.
+statsd==4.0.1
+prometheus-client==0.21.1

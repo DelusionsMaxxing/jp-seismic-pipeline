@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import date, timedelta
 from typing import Any
 
@@ -86,6 +86,21 @@ def fetch_events(
         offset += PAGE_LIMIT
 
     return features
+
+
+def max_magnitude(features: Iterable[Feature]) -> float | None:
+    """Largest usable magnitude in ``features``, or None if none carries one.
+
+    Magnitudes arrive from an external API, so anything non-numeric is ignored
+    rather than allowed to fail an otherwise healthy run.
+    """
+    magnitudes = [
+        value
+        for feature in features
+        if isinstance(value := feature.get("properties", {}).get("mag"), int | float)
+        and not isinstance(value, bool)
+    ]
+    return max(magnitudes) if magnitudes else None
 
 
 def iter_backfill_windows(

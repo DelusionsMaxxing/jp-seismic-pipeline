@@ -1,0 +1,91 @@
+groups:
+  - name: jp-seismic-ingest
+    rules:
+      # 36 hours rather than 24: the DAG runs daily at 03:00 UTC, so a single
+      # missed run plus its retries must be able to complete before anyone is
+      # woken up.
+      - alert: SeismicIngestStale
+        expr: >-
+          time() - jp_seismic_ingest_last_success_timestamp_seconds > 36 * 3600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful seismic ingest for over 36h (source {{ $labels.source }})"
+          description: >-
+            raw.earthquake_events has not been refreshed since
+            {{ $value | humanizeDuration }} ago. Check the jp_seismic_daily DAG.
+
+      - alert: SeismicIngestNeverReported
+        expr: absent(jp_seismic_ingest_last_success_timestamp_seconds)
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "No ingest metrics have ever been received"
+          description: >-
+            The Pushgateway holds no successful run for this pipeline. Either
+            ingest has never run since the monitoring stack came up, or
+            PUSHGATEWAY_URL is not set where the job runs.
+
+      - alert: SeismicIngestFailed
+        expr: jp_seismic_ingest_last_run_success == 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Last seismic ingest run failed (source {{ $labels.source }})"
+
+      - alert: SeismicIngestRejectingRows
+        expr: jp_seismic_ingest_rows_rejected > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ingest rejected {{ $value }} feature(s) as unusable"
+          description: >-
+            Features arrived without a usable id. That is an upstream contract
+            change, not a transient error — inspect the warning logs for the
+            offending payloads.
+
+  - name: jp-seismic-data
+    rules:
+      # A signal about the data, not about the pipeline. It fires hours after
+      # the event: ingest runs once a day at 03:00 UTC, so this is a "the last
+      # window contained something notable" flag for whoever reads the marts.
+      # It is NOT an earthquake early warning and must never be presented as
+      # one — for that, use JMA's own emergency channels.
+      - alert: SeismicStrongEventIngested
+        expr: jp_seismic_ingest_max_magnitude >= 6
+        labels:
+          severity: warning
+        annotations:
+          summary: "Last ingest window contained an M{{ $value }} event"
+          description: >-
+            Delivered on the pipeline's daily schedule, hours after the event
+            itself. Open the analytics dashboard for where and how deep.
+
+  - name: jp-seismic-infrastructure
+    rules:
+      - alert: SeismicWarehouseUnreachable
+        expr: pg_up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "postgres-exporter cannot reach the warehouse"
+
+      - alert: AirflowSchedulerHeartbeatMissing
+        expr: absent(airflow_scheduler_heartbeat)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Airflow scheduler is not reporting a heartbeat"
+
+      - alert: AirflowTaskFailures
+        expr: increase(airflow_ti_failures[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} Airflow task failure(s) in the last hour"

@@ -1,0 +1,41 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+
+  # Lets the firing/silenced alerts be read from inside Grafana, so the alert
+  # state and the panels that explain it live on one screen.
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
+
+  # Reads the warehouse directly for freshness and volume panels, through a
+  # role that holds SELECT and nothing else — never the pipeline's write user.
+  - name: Seismic warehouse
+    uid: seismic-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: seismic
+    user: seismic_readonly
+    secureJsonData:
+      password: $GRAFANA_DB_PASSWORD
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600

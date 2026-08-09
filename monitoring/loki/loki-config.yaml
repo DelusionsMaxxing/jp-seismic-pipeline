@@ -1,0 +1,53 @@
+# Single-binary Loki on the filesystem: the right size for one host running one
+# pipeline. The image default is almost this, but keeps logs forever — which on
+# a laptop ends as a disk-space incident rather than a monitoring one.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  # info-level Loki chatters about every flushed chunk, which then gets shipped
+  # back into Loki by Alloy.
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-04-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Matches Prometheus's 30d retention, so a metric spike and the logs
+  # explaining it age out together instead of one outliving the other.
+  retention_period: 720h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  # Retention is only enforced when the compactor is told to apply it; setting
+  # retention_period alone silently keeps everything.
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules

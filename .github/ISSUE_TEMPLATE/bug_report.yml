@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in the pipeline produces the wrong result, or does not run
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the failing command and its verbatim output.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Where it surfaced
+      options:
+        - ingest (jp_seismic CLI / USGS API)
+        - warehouse (raw schema, Postgres)
+        - dbt (staging / intermediate / marts)
+        - Airflow (DAG, scheduling, retries)
+        - monitoring (Prometheus, Grafana, alerts)
+        - CI
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: data-interval
+    attributes:
+      label: Affected data interval
+      description: The window the bad run covered, if the bug is data-shaped.
+      placeholder: "2026-08-01 .. 2026-08-02"
+
+  - type: checkboxes
+    id: reproducible
+    attributes:
+      label: Reproducibility
+      options:
+        - label: Re-running the same interval reproduces it
+        - label: It happened once and has not recurred

@@ -1,0 +1,46 @@
+name: Feature
+description: A new capability, model, or piece of instrumentation
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What becomes possible that is not possible today. State it as a result, not a task.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: The checklist that decides when this is done.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Layer
+      options:
+        - ingest
+        - warehouse / DDL
+        - dbt models
+        - Airflow orchestration
+        - monitoring and alerting
+        - tooling / CI
+    validations:
+      required: true
+
+  - type: textarea
+    id: observability
+    attributes:
+      label: How it will be observed
+      description: >-
+        Which metric, panel or alert tells us this is working in production.
+        "Nothing new is needed" is a valid answer if you say why.
+    validations:
+      required: true

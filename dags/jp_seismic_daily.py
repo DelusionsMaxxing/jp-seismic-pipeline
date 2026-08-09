@@ -33,6 +33,10 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=30),
+    # A day's ingest and a full dbt build both finish in seconds; 15 minutes is
+    # slack for a slow USGS response, not a plausible runtime. Without it a task
+    # that hangs on a socket holds its slot until somebody notices by hand.
+    "execution_timeout": timedelta(minutes=15),
 }
 
 
@@ -45,6 +49,9 @@ default_args = {
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
     max_active_runs=1,
+    # Bounds the whole run, including time spent waiting between retries, so a
+    # run cannot stay alive across the next day's schedule.
+    dagrun_timeout=timedelta(hours=1),
     default_args=default_args,
     tags=["seismic", "japan", "elt", "dbt"],
     doc_md=__doc__,

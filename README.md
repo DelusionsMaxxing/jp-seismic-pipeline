@@ -147,6 +147,11 @@ docker compose exec airflow-scheduler \
     airflow dags backfill jp_seismic_daily -s 2024-01-01 -e 2024-04-01
 ```
 
+`dags/` and `dbt/` are bind-mounted, so edits there take effect on the next DAG
+parse. `src/` is not — it is copied into the image and installed there — so a
+change to the Python package needs `docker compose build` before the containers
+run it.
+
 ### Without Docker
 
 ```bash
@@ -158,13 +163,80 @@ make build
 ### Useful targets
 
 ```
-make up        Start Postgres, scheduler and webserver
+make up        Start Postgres, scheduler, webserver and the monitoring stack
 make demo      Load fixture events instead of calling the API
 make build     Run every dbt model and its tests
 make test      Run the Python unit tests
+make monitor   Print the monitoring endpoints
+make backup    Dump the warehouse into backups/
+make restore   Restore a dump: make restore FILE=backups/seismic-....dump
 make docs      Generate and serve the dbt documentation site
 make clean     Stop the stack and delete data volumes
 ```
+
+On Windows there is no `make`; run the underlying `docker compose` commands
+directly, or use Git Bash with GNU Make installed.
+
+### Backups
+
+`make clean` deletes the data volume, and the raw layer is the only thing in
+this stack that cannot be rebuilt from somewhere else — dbt models are derived,
+and Airflow's metadata is disposable. So the dump covers the warehouse
+database, in Postgres custom format:
+
+```bash
+make backup
+```
+
+Restoring is the same command in reverse, and is worth rehearsing once before
+you need it rather than the first time you need it:
+
+```bash
+make restore FILE=backups/seismic-20260809T210000.dump
+```
+
+## Monitoring
+
+`make up` brings up Prometheus and Grafana alongside the pipeline. Grafana is
+on <http://localhost:3000> (`admin` / `admin` by default) with the **JP Seismic
+Pipeline** dashboard provisioned in the *Pipelines* folder — no clicking
+required, and no dashboard state that a rebuild would lose.
+
+Metrics arrive from three places:
+
+| Source | Route | What it answers |
+| --- | --- | --- |
+| The ingest job | `prometheus_client` → Pushgateway | rows read, written, rejected, run duration, time of last success |
+| Airflow | StatsD → `statsd-exporter` | task successes and failures, DAG run duration, scheduler heartbeat |
+| Postgres | `postgres_exporter` | is the warehouse reachable, connection and transaction stats |
+
+Ingest is a batch job that exits, so it **pushes** rather than being scraped.
+The push is optional: with `PUSHGATEWAY_URL` unset the pipeline runs exactly as
+before and simply publishes nothing, which is what keeps CI and laptop runs
+free of a monitoring dependency.
+
+The dashboard reads the warehouse directly for freshness and volume panels,
+through a `seismic_readonly` role that holds `SELECT` and nothing else.
+
+### Alerting
+
+The rules in `monitoring/prometheus/rules/` cover the failures that matter: no
+successful ingest in 36 hours, a failed run, rejected rows appearing, the
+warehouse unreachable, and the Airflow scheduler going quiet. Prometheus
+evaluates them and hands anything firing to **Alertmanager**
+(<http://localhost:9093>), which groups, deduplicates and silences them — and
+inhibits the downstream ingest alerts while the warehouse itself is down, so a
+single outage pages once rather than five times.
+
+Alertmanager ships with no notification integration configured: alerts are
+visible and silenceable in its UI and inside Grafana, but nothing leaves the
+host until a `telegram_configs`, `slack_configs` or `email_configs` block is
+added to `monitoring/alertmanager/alertmanager.yml`. Tokens belong in a
+`*_file` mount, never in that file.
+
+Everything above is provisioned from files under `monitoring/`, so a dashboard
+or alert change arrives as a reviewable diff rather than as somebody's edit in
+a UI.
 
 ## Testing
 
@@ -189,19 +261,26 @@ make test && make build
 ├── dags/
 │   └── jp_seismic_daily.py        Airflow DAG; derives its window from the data interval
 ├── src/jp_seismic/
-│   ├── config.py                  Bounding box, endpoint, DB config from env
+│   ├── config.py                  Bounding box, endpoint, DB and metrics config from env
 │   ├── extract.py                 Paged, retrying FDSN client
 │   ├── load.py                    Batched idempotent upsert
+│   ├── metrics.py                 Run metrics pushed to Prometheus
 │   └── cli.py                     Entrypoint shared by the DAG and manual backfills
 ├── dbt/models/
 │   ├── staging/                   Casting and renaming only
 │   ├── intermediate/              Derived classifications
 │   └── marts/                     dim / fct / agg
+├── monitoring/
+│   ├── prometheus/                Scrape config and alert rules
+│   ├── grafana/                   Datasources and the provisioned dashboard
+│   └── statsd/                    Airflow StatsD → Prometheus mapping
 ├── sql/
-│   ├── init/                      Warehouse DDL, applied on first start
+│   ├── init/                      Warehouse DDL and monitoring grants, applied on first start
 │   └── fixtures/                  Sample payloads for CI and `make demo`
 ├── tests/                         Unit tests, network mocked
-└── .github/workflows/ci.yml       Lint, unit tests, dbt build against Postgres
+└── .github/
+    ├── workflows/ci.yml           Lint, unit tests, dbt build, monitoring config checks
+    └── workflows/release.yml      Image build and publish, on a tag only
 ```
 
 ## Possible extensions

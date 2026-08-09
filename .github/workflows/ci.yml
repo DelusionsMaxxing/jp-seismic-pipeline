@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +25,9 @@ jobs:
 
       - name: Install package
         run: pip install -e ".[dev]"
+
+      - name: Ruff format
+        run: ruff format --check .
 
       - name: Ruff
         run: ruff check src tests dags
@@ -93,3 +97,63 @@ jobs:
       - name: dbt build (incremental re-run)
         working-directory: dbt
         run: dbt build --target dev
+
+  dags:
+    name: DAG import
+    runs-on: ubuntu-latest
+
+    env:
+      AIRFLOW_HOME: ${{ github.workspace }}/.airflow
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Airflow is not a package dependency — it comes from the base image at
+      # runtime — so CI installs the same version the Dockerfile pins, with
+      # Airflow's own constraints file to keep the resolve reproducible.
+      - name: Install Airflow
+        run: |
+          pip install "apache-airflow==2.10.3" \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Import every DAG
+        run: pytest -q -m airflow
+
+  monitoring:
+    name: Validate monitoring config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A malformed alert rule is only discovered when Prometheus refuses to
+      # start, which is exactly when you need it most.
+      - name: promtool check config and rules
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            --entrypoint promtool prom/prometheus:v2.55.1 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: amtool check-config
+        run: |
+          docker run --rm -v "$PWD/monitoring/alertmanager:/etc/alertmanager:ro" \
+            --entrypoint amtool prom/alertmanager:v0.28.0 \
+            check-config /etc/alertmanager/alertmanager.yml
+
+      - name: Dashboards parse as JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in sorted(Path("monitoring/grafana/dashboards").glob("*.json")):
+              json.loads(path.read_text(encoding="utf-8"))
+              print(f"ok {path}")
+          PY

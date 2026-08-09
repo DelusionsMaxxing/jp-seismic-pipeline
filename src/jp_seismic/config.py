@@ -24,6 +24,25 @@ PAGE_LIMIT = 20_000
 REQUEST_TIMEOUT_SECONDS = 30
 
 
+@dataclass(frozen=True, slots=True)
+class MonitoringConfig:
+    """Where a run publishes its metrics, if anywhere."""
+
+    pushgateway_url: str | None
+    job_name: str
+
+    @classmethod
+    def from_env(cls) -> MonitoringConfig:
+        # Absent rather than defaulted: monitoring is opt-in per environment,
+        # and a wrong default would silently push a laptop run into whatever
+        # gateway happens to answer on localhost.
+        url = os.environ.get("PUSHGATEWAY_URL", "").strip()
+        return cls(
+            pushgateway_url=url or None,
+            job_name=os.environ.get("METRICS_JOB_NAME", "jp_seismic_ingest"),
+        )
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     """Connection details for the warehouse Postgres instance."""
