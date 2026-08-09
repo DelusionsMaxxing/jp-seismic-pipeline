@@ -11,9 +11,12 @@ import argparse
 import logging
 import sys
 import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 import psycopg
+import requests
 
 from .config import DatabaseConfig, MonitoringConfig
 from .extract import (
@@ -28,11 +31,60 @@ from .metrics import IngestRun, publish_ingest_run
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _WindowOutcome:
+    rows_read: int
+    rows_written: int
+    rows_rejected: int
+    max_magnitude: float | None
+
+
 def _parse_date(value: str) -> date:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {value!r}") from exc
+
+
+def _load_window(
+    conn: psycopg.Connection,
+    session: requests.Session,
+    start: date,
+    end: date,
+    source: str,
+) -> _WindowOutcome:
+    features = fetch_events(start, end, session=session)
+    loaded = load_events(conn, features, source=source)
+
+    return _WindowOutcome(
+        rows_read=len(features),
+        rows_written=loaded.written,
+        rows_rejected=loaded.rejected,
+        max_magnitude=max_magnitude(features),
+    )
+
+
+def _summarise(
+    outcomes: Sequence[_WindowOutcome],
+    duration_seconds: float,
+    succeeded: bool,
+) -> IngestRun:
+    # Filtered on None rather than truthiness: USGS reports magnitudes of zero
+    # and below for the smallest events, and those are real values.
+    magnitudes = [
+        outcome.max_magnitude
+        for outcome in outcomes
+        if outcome.max_magnitude is not None
+    ]
+
+    return IngestRun(
+        rows_read=sum(outcome.rows_read for outcome in outcomes),
+        rows_written=sum(outcome.rows_written for outcome in outcomes),
+        rows_rejected=sum(outcome.rows_rejected for outcome in outcomes),
+        duration_seconds=duration_seconds,
+        succeeded=succeeded,
+        max_magnitude=max(magnitudes) if magnitudes else None,
+    )
 
 
 def ingest(
@@ -41,65 +93,40 @@ def ingest(
     window_days: int = 30,
     source: str = "usgs",
 ) -> int:
-    """Fetch and load every event in ``[start, end)``; return rows written."""
-    db = DatabaseConfig.from_env()
+    """Return rows written."""
+    database = DatabaseConfig.from_env()
     monitoring = MonitoringConfig.from_env()
     session = build_session()
 
     started = time.monotonic()
-    rows_read = 0
-    rows_written = 0
-    rows_rejected = 0
-    strongest: float | None = None
+    outcomes: list[_WindowOutcome] = []
     succeeded = False
 
     try:
-        with psycopg.connect(db.dsn) as conn:
+        with psycopg.connect(database.dsn) as conn:
             for window_start, window_end in iter_backfill_windows(
                 start, end, window_days=window_days
             ):
-                features = fetch_events(window_start, window_end, session=session)
-                rows_read += len(features)
-
-                window_max = max_magnitude(features)
-                if window_max is not None:
-                    # Compared against None explicitly: USGS reports magnitudes
-                    # of zero and below for the smallest events, and a
-                    # truthiness check would discard them.
-                    strongest = (
-                        window_max if strongest is None else max(strongest, window_max)
-                    )
-
-                result = load_events(conn, features, source=source)
-                rows_written += result.written
-                rows_rejected += result.rejected
+                outcomes.append(
+                    _load_window(conn, session, window_start, window_end, source)
+                )
         succeeded = True
     finally:
-        # Published from `finally` so a failed run still records its numbers —
-        # a run that dies silently is indistinguishable from one that never
-        # started, which is the failure mode monitoring exists to remove.
-        publish_ingest_run(
-            IngestRun(
-                rows_read=rows_read,
-                rows_written=rows_written,
-                rows_rejected=rows_rejected,
-                duration_seconds=time.monotonic() - started,
-                succeeded=succeeded,
-                max_magnitude=strongest,
-            ),
-            monitoring,
-            source=source,
-        )
+        # Published from finally so a run that raised still reports what it got
+        # through: a run that dies silently is indistinguishable from one that
+        # never started.
+        run = _summarise(outcomes, time.monotonic() - started, succeeded)
+        publish_ingest_run(run, monitoring, source=source)
 
     logger.info(
         "ingest complete: %d read, %d written, %d rejected for %s..%s",
-        rows_read,
-        rows_written,
-        rows_rejected,
+        run.rows_read,
+        run.rows_written,
+        run.rows_rejected,
         start,
         end,
     )
-    return rows_written
+    return run.rows_written
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,8 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
     )
 
-    # Default to yesterday: USGS keeps revising the current day's solutions,
-    # so a completed UTC day is the earliest point worth treating as stable.
+    # Default to yesterday: USGS keeps revising the current day's solutions, so
+    # a completed UTC day is the earliest point worth treating as stable.
     today = datetime.now(UTC).date()
     end = args.end or today
     start = args.start or end - timedelta(days=1)

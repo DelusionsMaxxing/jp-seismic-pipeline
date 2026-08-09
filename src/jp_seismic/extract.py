@@ -19,12 +19,9 @@ Feature = dict[str, Any]
 
 
 def build_session() -> requests.Session:
-    """A session that retries idempotent GETs with exponential backoff.
-
-    USGS rate-limits aggressively during swarm events, which is exactly when
-    a backfill is most likely to be running, so 429 is treated as retryable.
-    """
     session = requests.Session()
+    # USGS rate-limits aggressively during swarm events, which is exactly when
+    # a backfill is most likely to be running, so 429 is retryable here.
     retry = Retry(
         total=5,
         backoff_factor=1.5,
@@ -41,13 +38,6 @@ def fetch_events(
     end: date,
     session: requests.Session | None = None,
 ) -> list[Feature]:
-    """Return every event in the Japan bounding box for ``[start, end)``.
-
-    The API's ``endtime`` is inclusive of the instant, not the day, so the
-    caller's half-open interval is preserved by requesting up to midnight of
-    ``end``. Results are paged with ``offset`` because a single response is
-    capped at :data:`PAGE_LIMIT` features.
-    """
     if end <= start:
         raise ValueError(f"end ({end}) must be after start ({start})")
 
@@ -57,6 +47,8 @@ def fetch_events(
     offset = 1
 
     while True:
+        # endtime is inclusive of the instant rather than of the day, so
+        # requesting midnight of `end` preserves the caller's half-open range.
         params = {
             "format": "geojson",
             "starttime": start.isoformat(),
@@ -89,11 +81,8 @@ def fetch_events(
 
 
 def max_magnitude(features: Iterable[Feature]) -> float | None:
-    """Largest usable magnitude in ``features``, or None if none carries one.
-
-    Magnitudes arrive from an external API, so anything non-numeric is ignored
-    rather than allowed to fail an otherwise healthy run.
-    """
+    # Magnitudes arrive from an external API, so anything non-numeric is
+    # ignored rather than allowed to fail an otherwise healthy run.
     magnitudes = [
         value
         for feature in features
@@ -106,7 +95,6 @@ def max_magnitude(features: Iterable[Feature]) -> float | None:
 def iter_backfill_windows(
     start: date, end: date, window_days: int = 30
 ) -> Iterator[tuple[date, date]]:
-    """Split a long backfill into windows small enough to stay under the cap."""
     if window_days < 1:
         raise ValueError("window_days must be at least 1")
 
