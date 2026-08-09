@@ -147,11 +147,9 @@ services:
 
   loki:
     image: grafana/loki:3.3.2
-    # The image ships a single-binary filesystem config, which is the right size
-    # for one host. Swapping it for object storage is a decision for the day
-    # this stops fitting on a laptop.
-    command: ["-config.file=/etc/loki/local-config.yaml"]
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
     volumes:
+      - ./monitoring/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - loki-data:/loki
     ports:
       - "3100:3100"
