@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: stg_earthquakes
+    description: Typed, one-row-per-event view over the raw GeoJSON landing table.
+    columns:
+      - name: event_id
+        description: USGS event identifier.
+        data_tests:
+          - not_null
+          - unique
+      - name: occurred_at
+        description: Origin time of the event, UTC.
+        data_tests:
+          - not_null
+      - name: magnitude
+        description: >
+          Reported magnitude. Nullable: very small events are sometimes
+          published with a location but no magnitude solution.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: -2
+              max_value: 10
+              config:
+                where: magnitude is not null
+      - name: depth_km
+        description: Depth below sea level in kilometres. Negative means above datum.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: -10
+              max_value: 800
+              config:
+                where: depth_km is not null
+      - name: latitude
+        data_tests:
+          - dbt_utils.accepted_range: {min_value: -90, max_value: 90}
+      - name: longitude
+        data_tests:
+          - dbt_utils.accepted_range: {min_value: -180, max_value: 180}
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              values:
+                - earthquake
+                - quarry blast
+                - explosion
+                - ice quake
+                - other event
+                - nuclear explosion
+                - rock burst
+                - volcanic eruption
+              config:
+                severity: warn

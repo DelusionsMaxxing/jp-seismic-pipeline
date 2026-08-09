@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: dim_region
+    description: One row per distinct region label observed in the event feed.
+    columns:
+      - name: region_key
+        description: Surrogate key hashed from region_name.
+        data_tests:
+          - not_null
+          - unique
+      - name: region_name
+        data_tests:
+          - not_null
+          - unique
+
+  - name: fct_earthquakes
+    description: One row per seismic event in the Japan bounding box.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          expression: "occurred_at <= now()"
+          config:
+            severity: error
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null
+          - unique
+      - name: region_key
+        data_tests:
+          - relationships:
+              to: ref('dim_region')
+              field: region_key
+              config:
+                where: region_key is not null
+      - name: occurred_at
+        data_tests:
+          - not_null
+      - name: magnitude_band
+        data_tests:
+          - accepted_values:
+              values: [unknown, minor, light, moderate, strong, major, great]
+      - name: depth_band
+        data_tests:
+          - accepted_values:
+              values: [unknown, shallow, intermediate, deep]
+
+  - name: agg_daily_seismic_activity
+    description: Event counts and magnitude statistics per JST day and region.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [activity_date, region_key]
+    columns:
+      - name: activity_date
+        data_tests:
+          - not_null
+      - name: event_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range: {min_value: 1}
+      - name: damaging_event_count
+        description: Subset of event_count, so it can never exceed it.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              expression: "<= event_count"

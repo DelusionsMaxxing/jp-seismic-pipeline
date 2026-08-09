@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: Landing zone written by the ingestion DAG. Never edited by dbt.
+    tables:
+      - name: earthquake_events
+        description: >
+          One row per USGS event id, holding the untouched GeoJSON feature.
+          Re-ingesting a window updates the payload in place, so late
+          magnitude revisions arrive here without creating duplicates.
+        loaded_at_field: updated_at
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+        columns:
+          - name: event_id
+            description: USGS event identifier, e.g. us6000tj22.
+            data_tests:
+              - not_null
+              - unique
+          - name: payload
+            description: Raw GeoJSON feature as delivered by the FDSN API.
+            data_tests:
+              - not_null

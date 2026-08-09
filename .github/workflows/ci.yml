@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src tests dags
+
+      - name: Pytest
+        run: pytest
+
+  dbt:
+    name: dbt build against Postgres
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seismic
+          POSTGRES_PASSWORD: seismic
+          POSTGRES_DB: seismic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seismic"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: seismic
+      POSTGRES_PASSWORD: seismic
+      POSTGRES_DB: seismic
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dbt
+        run: pip install dbt-core==1.8.9 dbt-postgres==1.8.2
+
+      - name: Apply warehouse DDL and load fixtures
+        env:
+          PGPASSWORD: seismic
+        run: |
+          psql -h localhost -U seismic -d seismic -v ON_ERROR_STOP=1 \
+            -f sql/init/01_schemas.sql
+          psql -h localhost -U seismic -d seismic -v ON_ERROR_STOP=1 \
+            -f sql/fixtures/sample_events.sql
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      # `build` runs models and their tests in dependency order, so a broken
+      # assumption fails the pipeline at the model that introduced it.
+      - name: dbt build
+        working-directory: dbt
+        run: dbt build --target dev
+
+      # Re-running proves the incremental branch of fct_earthquakes compiles
+      # and merges correctly, which a first-run-only check never exercises.
+      - name: dbt build (incremental re-run)
+        working-directory: dbt
+        run: dbt build --target dev
