@@ -21,9 +21,15 @@ daily as (
         count(*) filter (where is_potentially_damaging)         as damaging_event_count,
         count(*) filter (where has_tsunami_flag)                as tsunami_flagged_count,
 
-        max(magnitude)                                          as max_magnitude,
-        avg(magnitude)                                          as avg_magnitude,
-        percentile_cont(0.5) within group (order by magnitude)  as median_magnitude,
+        max(magnitude) as max_magnitude,
+        avg(magnitude) as avg_magnitude,
+
+        -- percentile_cont has no numeric overload in Postgres: it takes and
+        -- returns double precision, which round(x, 2) does not accept. The
+        -- parentheses matter — without them the cast binds to the ORDER BY
+        -- expression instead of to the aggregate's result.
+        (percentile_cont(0.5) within group (order by magnitude))::numeric
+            as median_magnitude,
 
         min(depth_km)                                           as min_depth_km,
         avg(depth_km)                                           as avg_depth_km,
