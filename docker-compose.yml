@@ -17,6 +17,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__METRICS__STATSD_PREFIX: airflow
     DBT_PROJECT_DIR: /opt/airflow/dbt
     DBT_PROFILES_DIR: /opt/airflow/dbt
+    # dbt writes target/ and logs/ next to the project, and the project is a
+    # bind mount that keeps the host user's ownership on Linux — the container
+    # cannot create anything in it. Both are derived artefacts, so they go
+    # somewhere writable inside the container instead.
+    DBT_TARGET_PATH: /tmp/dbt/target
+    DBT_LOG_PATH: /tmp/dbt/logs
     POSTGRES_HOST: postgres
     POSTGRES_PORT: "5432"
     POSTGRES_USER: seismic
@@ -27,6 +33,13 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags
     - ./dbt:/opt/airflow/dbt
+    # Puts the dbt_packages the Dockerfile vendors back on top of the bind
+    # mount that shadows them. Docker seeds a named volume from the image the
+    # first time it is used, so this needs neither network nor a write to the
+    # host checkout — and the container cannot write there anyway on Linux.
+    # The trade-off is the usual one for seeded volumes: after changing
+    # packages.yml, `make clean` before `make up`, or the old packages stay.
+    - dbt-packages:/opt/airflow/dbt/dbt_packages
     - airflow-logs:/opt/airflow/logs
   depends_on:
     postgres:
@@ -70,14 +83,6 @@ services:
           --username admin --password admin \
           --firstname Admin --lastname User \
           --role Admin --email admin@example.com || true
-        # The ./dbt bind mount below shadows the dbt_packages the Dockerfile
-        # vendors at build time, so on a first `up` the scheduler would find no
-        # packages at all and every dbt task would fail to compile. Installing
-        # them here targets the mounted directory, and skipping when they are
-        # already present keeps a restart offline-capable.
-        if [ ! -d "$${DBT_PROJECT_DIR}/dbt_packages" ]; then
-          cd "$${DBT_PROJECT_DIR}" && dbt deps
-        fi
     restart: "no"
 
   airflow-webserver:
@@ -221,6 +226,7 @@ services:
 volumes:
   postgres-data:
   airflow-logs:
+  dbt-packages:
   prometheus-data:
   alertmanager-data:
   loki-data:
