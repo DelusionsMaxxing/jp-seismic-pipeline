@@ -50,7 +50,7 @@ flowchart LR
     DIM --> AGG
 
     AF{{"Airflow<br/>jp_seismic_daily"}} -.orchestrates.-> EX
-    AF -.dbt run + test.-> STG
+    AF -."dbt build, one task per layer".-> STG
 ```
 
 The split is deliberate: **Python only moves bytes, dbt does all the

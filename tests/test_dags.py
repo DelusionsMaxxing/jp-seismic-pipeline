@@ -42,6 +42,27 @@ def test_every_task_declares_an_execution_timeout(dagbag: DagBag) -> None:
     assert missing == []
 
 
+def test_dbt_is_one_task_per_layer_in_dependency_order(dagbag: DagBag) -> None:
+    # A single dbt task names neither the layer nor the model when it fails,
+    # and building every layer before testing any of them means a broken
+    # staging model is only caught after the marts are built on top of it.
+    dag = dagbag.dags["jp_seismic_daily"]
+
+    assert [task.task_id for task in dag.topological_sort()] == [
+        "ingest_events",
+        "build_staging_models",
+        "build_intermediate_models",
+        "build_marts_models",
+    ]
+
+
+@pytest.mark.parametrize("layer", ["staging", "intermediate", "marts"])
+def test_dbt_task_builds_only_its_own_layer(dagbag: DagBag, layer: str) -> None:
+    task = dagbag.dags["jp_seismic_daily"].get_task(f"build_{layer}_models")
+
+    assert f"dbt build --target dev --select path:models/{layer}" in task.bash_command
+
+
 def test_every_dag_has_an_owner_and_retries(dagbag: DagBag) -> None:
     for dag_id, dag in dagbag.dags.items():
         assert dag.default_args.get("owner"), f"{dag_id} has no owner"
