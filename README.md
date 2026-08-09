@@ -240,7 +240,7 @@ a UI.
 
 ## Testing
 
-Two layers, both enforced in CI on every push:
+Three layers, all enforced in CI on every push:
 
 - **Unit tests** (`pytest`) cover the parts that are easy to get quietly
   wrong: FDSN's 1-based paging offsets, `204` as an empty window rather than
@@ -250,6 +250,14 @@ Two layers, both enforced in CI on every push:
   container seeded with fixtures. CI runs `dbt build` **twice** so the
   incremental branch of `fct_earthquakes` is exercised, not just the
   first-run path that a single build would cover.
+- **The compose smoke test** (`.github/workflows/compose-smoke.yml`) is the
+  check that guards the first-run experience. It does what this README's
+  opening section says — `cp .env.example .env`, `make up`, `make demo` — then
+  runs the DAG's own `dbt_run` and `dbt_test` tasks inside the scheduler
+  container and asserts every mart came out non-empty. The other two layers
+  install dbt on the runner and never start the stack, so they cannot see a
+  broken image, a bind mount shadowing the vendored `dbt_packages`, or a
+  scheduler that crash-loops on first start.
 
 ```bash
 make test && make build
@@ -280,6 +288,7 @@ make test && make build
 ├── tests/                         Unit tests, network mocked
 └── .github/
     ├── workflows/ci.yml           Lint, unit tests, dbt build, monitoring config checks
+    ├── workflows/compose-smoke.yml  First run of the real stack, end to end
     └── workflows/release.yml      Image build and publish, on a tag only
 ```
 
