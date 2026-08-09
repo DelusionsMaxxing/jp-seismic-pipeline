@@ -20,4 +20,7 @@ RUN pip install --no-cache-dir -e /opt/airflow/project
 # access to run a transformation.
 COPY --chown=airflow:root dbt/packages.yml /opt/airflow/dbt/packages.yml
 COPY --chown=airflow:root dbt/dbt_project.yml /opt/airflow/dbt/dbt_project.yml
-RUN cd /opt/airflow/dbt && dbt deps
+
+WORKDIR /opt/airflow/dbt
+RUN dbt deps
+WORKDIR /opt/airflow

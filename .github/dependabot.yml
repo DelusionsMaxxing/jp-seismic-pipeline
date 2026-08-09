@@ -1,0 +1,26 @@
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Tooling moves faster than runtime dependencies and breaks nothing when
+      # it moves together, so it arrives as one PR rather than three.
+      dev-tooling:
+        patterns: ["ruff", "pytest*", "responses"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday

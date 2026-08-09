@@ -7,6 +7,11 @@ on:
     branches: [main, dev]
   workflow_dispatch:
 
+# Read-only by default: nothing in CI needs to write to the repository, and
+# the default token is writable unless it is narrowed here.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,6 +20,7 @@ jobs:
   lint-and-test:
     name: Lint and unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +44,7 @@ jobs:
   dbt:
     name: dbt build against Postgres
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -101,6 +108,7 @@ jobs:
   dags:
     name: DAG import
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
       AIRFLOW_HOME: ${{ github.workspace }}/.airflow
@@ -130,6 +138,7 @@ jobs:
   monitoring:
     name: Validate monitoring config
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

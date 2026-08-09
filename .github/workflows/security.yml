@@ -1,0 +1,145 @@
+name: Security
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  # New vulnerabilities are published against code that has not changed, so the
+  # weekly run matters as much as the per-PR one.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Audits the resolved environment rather than the declared pins, so
+      # transitive dependencies are covered too.
+      - name: Install the package
+        run: pip install -e ".[dev]"
+
+      # Report-only while the pins in this project are from late 2024: made
+      # blocking on day one it would wedge every branch behind the upgrade
+      # work. Drop continue-on-error once the upgrade PRs have landed — an
+      # audit that can never fail is theatre.
+      - uses: pypa/gh-action-pip-audit@v1.1.0
+        continue-on-error: true
+
+  image:
+    name: Container image scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the Airflow image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: jp-seismic:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: jp-seismic:ci
+          format: sarif
+          output: trivy-image.sarif
+          severity: HIGH,CRITICAL
+          # Same reasoning as the dependency audit: the base image is a release
+          # behind and would fail this immediately. Findings still land in the
+          # Security tab, which is the point until the upgrade lands.
+          exit-code: "0"
+
+      - name: Publish findings
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  static:
+    name: Dockerfile and secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Deterministic checks rather than a vulnerability feed, so these block:
+      # they fail only on something this repository actually did.
+      - name: Hadolint
+        uses: hadolint/hadolint-action@v3.4.0
+        with:
+          dockerfile: Dockerfile
+          # Warnings are printed but do not fail the build. The one that would
+          # otherwise block us is DL3008, "pin versions in apt-get install":
+          # pinning a Debian package version against a moving base image breaks
+          # the build the day a security update ships, which is the opposite of
+          # what pinning is for here.
+          failure-threshold: error
+
+      - name: Scan the working tree for secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: sarif
+          output: trivy-secrets.sarif
+          exit-code: "1"
+
+      - name: Publish findings
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-secrets.sarif
+          category: trivy-secrets
+
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Answers "are we affected by the next named CVE" without waiting for a
+      # scanner to catch up, and attaches to the run for later reference.
+      - uses: anchore/sbom-action@v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: jp-seismic-sbom.spdx.json
