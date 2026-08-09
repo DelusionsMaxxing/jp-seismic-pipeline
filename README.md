@@ -163,8 +163,31 @@ make demo      Load fixture events instead of calling the API
 make build     Run every dbt model and its tests
 make test      Run the Python unit tests
 make monitor   Print the monitoring endpoints
+make backup    Dump the warehouse into backups/
+make restore   Restore a dump: make restore FILE=backups/seismic-....dump
 make docs      Generate and serve the dbt documentation site
 make clean     Stop the stack and delete data volumes
+```
+
+On Windows there is no `make`; run the underlying `docker compose` commands
+directly, or use Git Bash with GNU Make installed.
+
+### Backups
+
+`make clean` deletes the data volume, and the raw layer is the only thing in
+this stack that cannot be rebuilt from somewhere else — dbt models are derived,
+and Airflow's metadata is disposable. So the dump covers the warehouse
+database, in Postgres custom format:
+
+```bash
+make backup
+```
+
+Restoring is the same command in reverse, and is worth rehearsing once before
+you need it rather than the first time you need it:
+
+```bash
+make restore FILE=backups/seismic-20260809T210000.dump
 ```
 
 ## Monitoring

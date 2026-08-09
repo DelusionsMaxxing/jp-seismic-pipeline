@@ -4,7 +4,7 @@
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
-	CREATE USER seismic WITH PASSWORD 'seismic';
+	CREATE USER seismic WITH PASSWORD '${SEISMIC_PASSWORD}';
 	CREATE DATABASE seismic OWNER seismic;
 
 	-- Grafana reads the warehouse through this role: SELECT and nothing else.

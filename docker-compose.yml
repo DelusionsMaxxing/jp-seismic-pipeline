@@ -20,7 +20,7 @@ x-airflow-common: &airflow-common
     POSTGRES_HOST: postgres
     POSTGRES_PORT: "5432"
     POSTGRES_USER: seismic
-    POSTGRES_PASSWORD: seismic
+    POSTGRES_PASSWORD: ${SEISMIC_PASSWORD:-seismic}
     POSTGRES_DB: seismic
     # Ingest exits between runs, so its metrics are pushed rather than scraped.
     PUSHGATEWAY_URL: http://pushgateway:9091
@@ -41,7 +41,10 @@ services:
       # Airflow's metadata DB is created by the image; the warehouse DB and
       # its schemas come from the init scripts below.
       POSTGRES_DB: airflow
-      # Consumed by bootstrap.sh when it creates the monitoring roles.
+      # Consumed by bootstrap.sh when it creates the warehouse and monitoring
+      # roles. The defaults keep a laptop working with no .env at all; any
+      # environment that is not a laptop overrides them.
+      SEISMIC_PASSWORD: ${SEISMIC_PASSWORD:-seismic}
       READONLY_PASSWORD: ${READONLY_PASSWORD:-readonly}
       EXPORTER_PASSWORD: ${EXPORTER_PASSWORD:-exporter}
     volumes:
