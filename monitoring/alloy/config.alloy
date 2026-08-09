@@ -1,0 +1,58 @@
+// Ships two kinds of logs into Loki:
+//   1. container stdout/stderr, which is where the ingest CLI and the scheduler
+//      write, and
+//   2. Airflow's per-task log files, which never reach stdout and are the only
+//      place a failed task's traceback exists.
+
+discovery.docker "compose" {
+	host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "compose" {
+	targets = discovery.docker.compose.targets
+
+	// Only this project's containers: the socket exposes everything running on
+	// the host, and hoovering up unrelated containers is how a local Loki turns
+	// into a disk-space incident.
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		regex         = "jp-seismic-pipeline"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+}
+
+loki.source.docker "compose" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.compose.output
+	labels     = {job = "docker"}
+	forward_to = [loki.write.local.receiver]
+}
+
+local.file_match "airflow_tasks" {
+	path_targets = [{
+		__path__ = "/opt/airflow/logs/dag_id=*/**/*.log",
+		job      = "airflow-tasks",
+	}]
+}
+
+loki.source.file "airflow_tasks" {
+	targets    = local.file_match.airflow_tasks.targets
+	forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

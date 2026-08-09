@@ -9,6 +9,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
       postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    # Scheduler and task metrics leave over StatsD and are translated into
+    # Prometheus series by statsd-exporter.
+    AIRFLOW__METRICS__STATSD_ON: "true"
+    AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+    AIRFLOW__METRICS__STATSD_PORT: "9125"
+    AIRFLOW__METRICS__STATSD_PREFIX: airflow
     DBT_PROJECT_DIR: /opt/airflow/dbt
     DBT_PROFILES_DIR: /opt/airflow/dbt
     POSTGRES_HOST: postgres
@@ -16,6 +22,8 @@ x-airflow-common: &airflow-common
     POSTGRES_USER: seismic
     POSTGRES_PASSWORD: seismic
     POSTGRES_DB: seismic
+    # Ingest exits between runs, so its metrics are pushed rather than scraped.
+    PUSHGATEWAY_URL: http://pushgateway:9091
   volumes:
     - ./dags:/opt/airflow/dags
     - ./dbt:/opt/airflow/dbt
@@ -33,6 +41,9 @@ services:
       # Airflow's metadata DB is created by the image; the warehouse DB and
       # its schemas come from the init scripts below.
       POSTGRES_DB: airflow
+      # Consumed by bootstrap.sh when it creates the monitoring roles.
+      READONLY_PASSWORD: ${READONLY_PASSWORD:-readonly}
+      EXPORTER_PASSWORD: ${EXPORTER_PASSWORD:-exporter}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./sql/init:/docker-entrypoint-initdb.d/warehouse:ro
@@ -56,6 +67,14 @@ services:
           --username admin --password admin \
           --firstname Admin --lastname User \
           --role Admin --email admin@example.com || true
+        # The ./dbt bind mount below shadows the dbt_packages the Dockerfile
+        # vendors at build time, so on a first `up` the scheduler would find no
+        # packages at all and every dbt task would fail to compile. Installing
+        # them here targets the mounted directory, and skipping when they are
+        # already present keeps a restart offline-capable.
+        if [ ! -d "$${DBT_PROJECT_DIR}/dbt_packages" ]; then
+          cd "$${DBT_PROJECT_DIR}" && dbt deps
+        fi
     restart: "no"
 
   airflow-webserver:
@@ -81,6 +100,128 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # --- monitoring -----------------------------------------------------------
+
+  pushgateway:
+    image: prom/pushgateway:v1.10.0
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+
+  statsd-exporter:
+    image: prom/statsd-exporter:v0.28.0
+    command:
+      - --statsd.mapping-config=/etc/statsd/mapping.yml
+      - --statsd.listen-udp=:9125
+      - --web.listen-address=:9102
+    volumes:
+      - ./monitoring/statsd/mapping.yml:/etc/statsd/mapping.yml:ro
+    ports:
+      - "9102:9102"
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    environment:
+      DATA_SOURCE_NAME: >-
+        postgresql://seismic_exporter:${EXPORTER_PASSWORD:-exporter}@postgres:5432/seismic?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9187:9187"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.3.2
+    # The image ships a single-binary filesystem config, which is the right size
+    # for one host. Swapping it for object storage is a decision for the day
+    # this stops fitting on a laptop.
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.5.1
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    # Reading the Docker socket needs root; everything Alloy touches is mounted
+    # read-only.
+    user: root
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - airflow-logs:/opt/airflow/logs:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    ports:
+      - "12345:12345"
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # Needed for the "silence" links in notifications to point somewhere real.
+      - --web.external-url=http://localhost:9093
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Interpolated into the provisioned Postgres datasource, so the read-only
+      # password never sits in a committed file.
+      GRAFANA_DB_PASSWORD: ${READONLY_PASSWORD:-readonly}
+    volumes:
+      # Mounted per subdirectory: replacing the whole provisioning directory
+      # hides the empty alerting/ and plugins/ folders the image ships, and
+      # Grafana logs an error for each on every start.
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - alertmanager
+      - loki
+      - postgres
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   airflow-logs:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  alloy-data:
+  grafana-data:

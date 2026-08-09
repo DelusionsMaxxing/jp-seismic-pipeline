@@ -12,6 +12,7 @@ license = {text = "MIT"}
 dependencies = [
     "requests>=2.32",
     "psycopg[binary]>=3.2",
+    "prometheus-client>=0.21",
 ]
 
 [project.optional-dependencies]

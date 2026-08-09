@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: jp-seismic
+    orgId: 1
+    folder: Pipelines
+    type: file
+    # Dashboards are code: editing one in the UI would be overwritten on the
+    # next reload, which is the point — changes go through a PR.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

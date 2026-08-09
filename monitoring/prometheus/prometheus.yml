@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    project: jp-seismic-pipeline
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # The ingest job exits between runs, so its numbers arrive by push. honor_labels
+  # keeps the job and source labels the pipeline set, instead of overwriting them
+  # with the scrape target's.
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: airflow
+    static_configs:
+      - targets: ["statsd-exporter:9102"]
+
+  # Monitoring the alerting path itself: a silent Alertmanager looks exactly
+  # like a healthy pipeline.
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

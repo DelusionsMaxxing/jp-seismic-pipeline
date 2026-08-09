@@ -29,8 +29,17 @@ clean: ## Stop the stack and delete data volumes
 logs: ## Tail scheduler logs
 	docker compose logs -f airflow-scheduler
 
+.PHONY: monitor
+monitor: ## Print the monitoring endpoints
+	@echo "Grafana       http://localhost:3000  (admin / $${GRAFANA_ADMIN_PASSWORD:-admin})"
+	@echo "Prometheus    http://localhost:9090  (alerts at /alerts)"
+	@echo "Alertmanager  http://localhost:9093"
+	@echo "Pushgateway   http://localhost:9091"
+	@echo "Airflow       http://localhost:8080  (admin / admin)"
+
 .PHONY: lint
 lint: ## Run ruff
+	ruff format --check .
 	ruff check src tests dags
 
 .PHONY: test
