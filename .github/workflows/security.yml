@@ -75,6 +75,11 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           severity: HIGH,CRITICAL
+          # severity alone only filters the table printed to the log - the SARIF
+          # carries every severity, which buried 217 actionable findings under
+          # 1151 on the first run. The Security tab is only useful if what is in
+          # it is worth acting on.
+          limit-severities-for-sarif: true
           # Same reasoning as the dependency audit: the base image is a release
           # behind and would fail this immediately. Findings still land in the
           # Security tab, which is the point until the upgrade lands.
