@@ -104,9 +104,9 @@ jobs:
         working-directory: dbt
         run: dbt build --target dev
 
-      # Re-running proves the incremental branch of fct_earthquakes compiles
-      # and merges correctly, which a first-run-only check never exercises.
-      - name: dbt build (incremental re-run)
+      # Re-running proves a build over an already-populated warehouse produces
+      # the same result, which a first-run-only check never exercises.
+      - name: dbt build (rebuild over existing data)
         working-directory: dbt
         run: dbt build --target dev
 
