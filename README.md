@@ -1,6 +1,6 @@
 # Japan Seismic Activity Pipeline
 
-[![CI](https://github.com/DelusionsMaxxing/jp-seismic-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/DelusionsMaxxing/jp-seismic-pipeline/actions/workflows/ci.yml)
+[![CI](https://github.com/Cresifine/jp-seismic-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Cresifine/jp-seismic-pipeline/actions/workflows/ci.yml)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![dbt 1.8](https://img.shields.io/badge/dbt-1.8-FF694B?logo=dbt&logoColor=white)](https://www.getdbt.com/)
 [![Airflow 2.10](https://img.shields.io/badge/airflow-2.10-017CEE?logo=apacheairflow&logoColor=white)](https://airflow.apache.org/)
@@ -127,7 +127,7 @@ Requires Docker and Docker Compose. Nothing else, and no API key — the USGS
 FDSN endpoint is open.
 
 ```bash
-git clone https://github.com/DelusionsMaxxing/jp-seismic-pipeline.git
+git clone https://github.com/Cresifine/jp-seismic-pipeline.git
 cd jp-seismic-pipeline
 cp .env.example .env
 make up
