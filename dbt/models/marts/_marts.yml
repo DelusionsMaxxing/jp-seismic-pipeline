@@ -15,7 +15,11 @@ models:
           - unique
 
   - name: fct_earthquakes
-    description: One row per seismic event in the Japan bounding box.
+    description: >
+      One row per seismic event in the Japan bounding box. Rebuilt in full on
+      every run — a full refresh of a million rows takes about three seconds,
+      so incrementality would buy nothing and would have to be proved against
+      a periodic full refresh to stay trustworthy.
     data_tests:
       - dbt_utils.expression_is_true:
           expression: "occurred_at <= now()"
