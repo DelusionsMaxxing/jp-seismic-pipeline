@@ -25,6 +25,12 @@ dev = [
     "pytest-cov>=7.1",
     "responses>=0.25",
     "ruff>=0.16",
+    # Build tooling rather than a test dependency, but the dependency audit
+    # scans the resolved environment, and the setuptools a runner's Python
+    # ships is old enough to carry PYSEC-2026-3447. Declaring the floor here is
+    # what makes the environment clean; the same floor under [build-system]
+    # only governs the isolated build.
+    "setuptools>=83",
 ]
 
 [project.scripts]
