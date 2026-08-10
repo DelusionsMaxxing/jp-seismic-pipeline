@@ -142,10 +142,10 @@ jobs:
       # and the image's dbt install are all part of what is being asserted.
       - name: Run the DAG's dbt tasks
         run: |
-          docker compose exec -T airflow-scheduler \
-            airflow tasks test jp_seismic_daily dbt_run 2026-01-01
-          docker compose exec -T airflow-scheduler \
-            airflow tasks test jp_seismic_daily dbt_test 2026-01-01
+          for layer in staging intermediate marts; do
+            docker compose exec -T airflow-scheduler \
+              airflow tasks test jp_seismic_daily "build_${layer}_models" 2026-01-01
+          done
 
       - name: Marts are non-empty
         run: |

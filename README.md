@@ -253,8 +253,8 @@ Three layers, all enforced in CI on every push:
 - **The compose smoke test** (`.github/workflows/compose-smoke.yml`) is the
   check that guards the first-run experience. It does what this README's
   opening section says — `cp .env.example .env`, `make up`, `make demo` — then
-  runs the DAG's own `dbt_run` and `dbt_test` tasks inside the scheduler
-  container and asserts every mart came out non-empty. The other two layers
+  runs the DAG's own per-layer `dbt build` tasks inside the scheduler container
+  and asserts every mart came out non-empty. The other two layers
   install dbt on the runner and never start the stack, so they cannot see a
   broken image, a bind mount shadowing the vendored `dbt_packages`, or a
   scheduler that crash-loops on first start.
