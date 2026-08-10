@@ -1,9 +1,6 @@
 {{
     config(
-        materialized='incremental',
-        unique_key='event_id',
-        incremental_strategy='delete+insert',
-        on_schema_change='append_new_columns',
+        materialized='table',
         indexes=[
             {'columns': ['occurred_at']},
             {'columns': ['region_key']},
@@ -11,21 +8,19 @@
     )
 }}
 
--- Event-grain fact table. Incremental rather than full-refresh because the
--- history only grows, but the lookback below is deliberately generous:
--- USGS replaces automatic solutions with reviewed ones for days afterwards,
--- and a plain "only new rows" filter would freeze the first, worse estimate.
+-- Event-grain fact table, rebuilt in full on every run. The feed produces a
+-- few events a day, so a full rebuild is bounded by the source table rather
+-- than by anything this model does: measured against Postgres 16 it takes
+-- 0.14s at 322 rows, 0.48s at 100k and 3.2s at 1M. Reaching the ten-minute
+-- mark that would justify incrementality needs a couple of hundred million
+-- rows — centuries of history at the observed rate.
+--
+-- Rebuilding also means USGS revisions land without a lookback window: the
+-- reviewed solution simply replaces the automatic one on the next run.
 
 with enriched as (
 
     select * from {{ ref('int_earthquakes_enriched') }}
-
-    {% if is_incremental() %}
-    where updated_at >= (
-        select coalesce(max(updated_at), '1900-01-01'::timestamptz) - interval '7 days'
-        from {{ this }}
-    )
-    {% endif %}
 
 ),
 
