@@ -147,13 +147,13 @@ jobs:
       - name: promtool check config and rules
         run: |
           docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
-            --entrypoint promtool prom/prometheus:v2.55.1 \
+            --entrypoint promtool prom/prometheus:v3.13.2 \
             check config /etc/prometheus/prometheus.yml
 
       - name: amtool check-config
         run: |
           docker run --rm -v "$PWD/monitoring/alertmanager:/etc/alertmanager:ro" \
-            --entrypoint amtool prom/alertmanager:v0.28.0 \
+            --entrypoint amtool prom/alertmanager:v0.33.1 \
             check-config /etc/alertmanager/alertmanager.yml
 
       - name: Dashboards parse as JSON
