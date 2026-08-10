@@ -263,6 +263,13 @@ Three layers, all enforced in CI on every push:
 make test && make build
 ```
 
+Alongside the tests, CI enforces the rules that are otherwise only written
+down: `ruff` for style plus complexity and argument-count limits, `mypy` for
+the requirement that every signature carries types, and a coverage floor. The
+floor is deliberately set at what the suite reaches today rather than at a
+target — a floor nobody can meet gets lowered or deleted, which is worse than
+having none.
+
 ## Project layout
 
 ```

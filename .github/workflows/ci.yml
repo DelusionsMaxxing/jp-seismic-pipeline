@@ -38,6 +38,11 @@ jobs:
       - name: Ruff
         run: ruff check src tests dags
 
+      - name: Mypy
+        run: mypy
+
+      # Coverage flags and the floor live in pyproject, so this stays the same
+      # command a developer runs locally.
       - name: Pytest
         run: pytest
 
@@ -132,8 +137,12 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
 
+      # --no-cov because the coverage floor in pyproject applies to every
+      # pytest invocation, and this job deliberately runs one marker's worth of
+      # tests. Measuring coverage of the package from the DAG tests alone would
+      # fail the floor for a reason that says nothing about the code.
       - name: Import every DAG
-        run: pytest -q -m airflow
+        run: pytest -q -m airflow --no-cov
 
   monitoring:
     name: Validate monitoring config

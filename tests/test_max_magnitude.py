@@ -7,27 +7,27 @@ def _feature(mag: object) -> dict:
     return {"id": "us1", "properties": {"mag": mag}}
 
 
-def test_max_magnitude_returns_the_largest_value():
+def test_max_magnitude_returns_the_largest_value() -> None:
     assert max_magnitude([_feature(3.1), _feature(6.4), _feature(2.0)]) == 6.4
 
 
-def test_max_magnitude_on_empty_input_is_none():
+def test_max_magnitude_on_empty_input_is_none() -> None:
     assert max_magnitude([]) is None
 
 
-def test_max_magnitude_ignores_features_without_a_magnitude():
+def test_max_magnitude_ignores_features_without_a_magnitude() -> None:
     assert max_magnitude([_feature(None), {"properties": {}}, _feature(4.2)]) == 4.2
 
 
-def test_max_magnitude_when_no_feature_carries_one_is_none():
+def test_max_magnitude_when_no_feature_carries_one_is_none() -> None:
     assert max_magnitude([_feature(None), {"id": "us2"}]) is None
 
 
-def test_max_magnitude_keeps_magnitudes_at_or_below_zero():
+def test_max_magnitude_keeps_magnitudes_at_or_below_zero() -> None:
     # USGS publishes negative magnitudes for the smallest events; discarding
     # them would silently misreport a quiet window as having no data.
     assert max_magnitude([_feature(-0.4), _feature(0.0)]) == 0.0
 
 
-def test_max_magnitude_ignores_non_numeric_values():
+def test_max_magnitude_ignores_non_numeric_values() -> None:
     assert max_magnitude([_feature("6.0"), _feature(True), _feature(3.3)]) == 3.3
