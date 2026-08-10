@@ -37,7 +37,7 @@ flowchart LR
         STG["stg_earthquakes<br/><i>view</i>"]
         INT["int_earthquakes_enriched<br/><i>view</i>"]
         DIM["dim_region<br/><i>table</i>"]
-        FCT["fct_earthquakes<br/><i>incremental</i>"]
+        FCT["fct_earthquakes<br/><i>table</i>"]
         AGG["agg_daily_seismic_activity<br/><i>table</i>"]
     end
 
@@ -66,7 +66,7 @@ rather than a re-ingest of history.
 | `stg_earthquakes` | one event | view | Casts and renames the GeoJSON payload. No business logic. |
 | `int_earthquakes_enriched` | one event | view | Derives region, depth band, magnitude band, JST calendar date. |
 | `dim_region` | one region | table | Conformed region dimension with a hashed surrogate key. |
-| `fct_earthquakes` | one event | incremental | Event fact, joined to `dim_region`. |
+| `fct_earthquakes` | one event | table | Event fact, joined to `dim_region`. |
 | `agg_daily_seismic_activity` | day × region | table | Daily counts and magnitude statistics on JST. |
 
 **5 models, 27 data tests, 1 source freshness check.**
@@ -96,15 +96,16 @@ an unexpected field type crashes the loader and the event is lost. Landing
 the feature whole and parsing in `stg_earthquakes` means a bad assumption
 costs a `dbt run`, not a backfill.
 
-**A seven-day incremental lookback, not "rows newer than max".** USGS
-publishes an automatic solution within minutes and replaces it with a
-reviewed one for days afterwards. A naive high-watermark filter would freeze
-the first, least accurate estimate forever. `fct_earthquakes` reprocesses on
-`updated_at`, so revisions land.
-
-**`delete+insert` over `merge`.** Postgres has no native `MERGE` path in dbt's
-incremental strategies that beats it here, and the volume — thousands of rows
-per run, not millions — makes the simpler strategy the right trade.
+**A full rebuild of `fct_earthquakes`, not an incremental model.** USGS
+publishes an automatic solution within minutes and replaces it with a reviewed
+one for days afterwards, so any incremental filter needs a lookback window
+generous enough to catch revisions — and then a periodic full refresh to prove
+the window never silently drifted. Rebuilding sidesteps both: the reviewed
+solution simply replaces the automatic one on the next run. Measured against
+Postgres 16 the rebuild takes 0.14s at 322 rows, 0.48s at 100k and 3.2s at 1M,
+so the ten-minute mark that would justify incrementality sits a couple of
+hundred million rows away — centuries of history at the rate this feed
+produces events.
 
 **Aggregating on Asia/Tokyo, not UTC.** A report about Japan that splits a
 21:00 JST event into the previous day is wrong in the only way that matters
@@ -247,8 +248,8 @@ Three layers, all enforced in CI on every push:
   an error, backfill windows that tile a range without gaps or overlap, and
   batching in the loader — all with the network mocked.
 - **Warehouse tests** (`dbt build`) run against a real PostgreSQL service
-  container seeded with fixtures. CI runs `dbt build` **twice** so the
-  incremental branch of `fct_earthquakes` is exercised, not just the
+  container seeded with fixtures. CI runs `dbt build` **twice**, so a rebuild
+  over an already-populated warehouse is exercised rather than only the
   first-run path that a single build would cover.
 - **The compose smoke test** (`.github/workflows/compose-smoke.yml`) is the
   check that guards the first-run experience. It does what this README's
