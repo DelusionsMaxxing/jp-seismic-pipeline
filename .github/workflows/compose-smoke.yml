@@ -1,0 +1,171 @@
+name: Compose smoke test
+
+# Guards the first-run experience: everything here is what a reader of the
+# README does on a clean machine — copy the env file, `make up`, load the
+# fixtures, watch the marts appear. The rest of CI installs dbt on the runner
+# against a bare Postgres service, which exercises the models but not the
+# image, the bind mounts or the container wiring. A bind mount shadowing the
+# dbt_packages vendored into the image broke dbt on every first run and was
+# invisible to that job.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Its own group, so a queued smoke run never cancels the lint and dbt jobs.
+concurrency:
+  group: compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Stack starts and produces marts
+    runs-on: ubuntu-latest
+    # Observed runtime is well under ten minutes, most of it the image build.
+    # The cap is slack for a slow registry, not a plausible runtime.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Exactly the two commands the README opens with. `make up` is
+      # `docker compose up -d --build`, which returns only once airflow-init
+      # has completed, so the wait below is about the scheduler, not the DB.
+      - name: Start the stack
+        run: |
+          cp .env.example .env
+          make up
+
+      - name: airflow-init completed cleanly
+        run: |
+          container="$(docker compose ps -aq airflow-init)"
+          if [ -z "${container}" ]; then
+            echo "::error::airflow-init was never created"
+            exit 1
+          fi
+          code="$(docker wait "${container}")"
+          docker compose logs --no-color airflow-init
+          echo "airflow-init exited ${code}"
+          test "${code}" = "0"
+
+      # The scheduler has no healthcheck in compose, so poll the same command
+      # the official Airflow image uses for one. A scheduler that crash-loops
+      # on first start is precisely the failure this job exists to catch.
+      - name: Scheduler is alive
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T airflow-scheduler \
+                bash -c 'airflow jobs check --job-type SchedulerJob --hostname "$HOSTNAME"'; then
+              echo "scheduler healthy after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::the Airflow scheduler never reported a healthy job"
+          exit 1
+
+      # The DAG is unpaused on creation, so the scheduler starts a real run
+      # within seconds of `make up` — one that calls USGS. Pausing it keeps
+      # this job off the network and makes the smoke run the only process
+      # building the marts; two dbt runs racing each other collide on the
+      # table materialisations. `dags pause` failing is itself a signal: it
+      # means the scheduler never parsed and registered the DAG.
+      - name: Pause the DAG so the smoke run owns the warehouse
+        run: |
+          paused=0
+          for attempt in $(seq 1 24); do
+            if docker compose exec -T airflow-scheduler \
+                airflow dags pause jp_seismic_daily; then
+              paused=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "${paused}" != "1" ]; then
+            echo "::error::jp_seismic_daily never registered with the scheduler"
+            exit 1
+          fi
+
+          # Pausing stops further scheduling but not a task already in flight,
+          # so drain whatever the automatic run started before proceeding.
+          run_id="$(docker compose exec -T airflow-scheduler \
+            airflow dags list-runs -d jp_seismic_daily --output json \
+            | jq -r 'first(.[].run_id) // empty')"
+          if [ -z "${run_id}" ]; then
+            echo "no automatic run to drain"
+            exit 0
+          fi
+          for attempt in $(seq 1 30); do
+            active="$(docker compose exec -T airflow-scheduler \
+              airflow tasks states-for-dag-run jp_seismic_daily "${run_id}" --output json \
+              | jq '[.[] | select(.state == "running" or .state == "queued")] | length')"
+            echo "run ${run_id}: ${active} task(s) still in flight"
+            if [ "${active}" = "0" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::the automatic DAG run never stopped working"
+          exit 1
+
+      # The regression test for the bind-mount bug. dbt compiles nothing
+      # without dbt_utils, so an empty or shadowed dbt_packages fails every
+      # transformation task the moment the DAG first runs.
+      - name: dbt packages are present inside the scheduler
+        run: |
+          if ! docker compose exec -T airflow-scheduler \
+              test -d /opt/airflow/dbt/dbt_packages/dbt_utils; then
+            echo "::error::dbt_packages/dbt_utils is missing inside airflow-scheduler; the ./dbt bind mount is shadowing what the image vendored"
+            docker compose exec -T airflow-scheduler ls -la /opt/airflow/dbt || true
+            exit 1
+          fi
+          docker compose exec -T airflow-scheduler ls /opt/airflow/dbt/dbt_packages
+
+      # `make demo`, i.e. the documented way to get data without the network.
+      - name: Load the fixtures
+        run: |
+          make demo
+          rows="$(docker compose exec -T postgres \
+            psql -U seismic -d seismic -tAc \
+            'select count(*) from raw.earthquake_events' | tr -d '[:space:]')"
+          echo "raw.earthquake_events: ${rows} rows"
+          test "${rows}" -gt 0
+
+      # Running the DAG's own tasks rather than a hand-written dbt command
+      # keeps the check honest: the BashOperator's working directory, its env
+      # and the image's dbt install are all part of what is being asserted.
+      - name: Run the DAG's dbt tasks
+        run: |
+          for layer in staging intermediate marts; do
+            docker compose exec -T airflow-scheduler \
+              airflow tasks test jp_seismic_daily "build_${layer}_models" 2026-01-01
+          done
+
+      - name: Marts are non-empty
+        run: |
+          for table in dim_region fct_earthquakes agg_daily_seismic_activity; do
+            rows="$(docker compose exec -T postgres \
+              psql -U seismic -d seismic -tAc \
+              "select count(*) from analytics_marts.${table}" | tr -d '[:space:]')"
+            echo "analytics_marts.${table}: ${rows} rows"
+            if [ "${rows}" -le 0 ]; then
+              echo "::error::analytics_marts.${table} is empty after a full run"
+              exit 1
+            fi
+          done
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      # `make clean` rather than `make down`: the runner is disposable, but
+      # leaving the volumes behind would hide a first-run bug on a re-run.
+      - name: Tear the stack down
+        if: always()
+        run: make clean

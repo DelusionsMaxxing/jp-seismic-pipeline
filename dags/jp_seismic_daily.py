@@ -21,8 +21,10 @@ DBT_DIR = os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt")
 # names the layer that broke instead of "the transformation failed".
 DBT_LAYERS = ("staging", "intermediate", "marts")
 
-# dbt writes compiled artefacts into the project dir, which is read-only when
-# mounted from the host, so redirect them somewhere writable.
+# dbt writes compiled artefacts into the project dir, which the container
+# cannot write to when it is bind-mounted from the host. DBT_TARGET_PATH and
+# DBT_LOG_PATH redirect them, and come from the container environment via
+# append_env below rather than being repeated here.
 DBT_ENV = {
     "DBT_PROFILES_DIR": DBT_DIR,
     "POSTGRES_HOST": os.environ.get("POSTGRES_HOST", "postgres"),
