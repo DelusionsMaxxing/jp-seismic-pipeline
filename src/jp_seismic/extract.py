@@ -49,7 +49,7 @@ def fetch_events(
     while True:
         # endtime is inclusive of the instant rather than of the day, so
         # requesting midnight of `end` preserves the caller's half-open range.
-        params = {
+        params: dict[str, str | int | float] = {
             "format": "geojson",
             "starttime": start.isoformat(),
             "endtime": end.isoformat(),
