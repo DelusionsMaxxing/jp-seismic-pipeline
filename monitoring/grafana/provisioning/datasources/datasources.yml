@@ -32,10 +32,13 @@ datasources:
     type: postgres
     access: proxy
     url: postgres:5432
-    database: seismic
     user: seismic_readonly
     secureJsonData:
       password: $GRAFANA_DB_PASSWORD
     jsonData:
+      # Under jsonData, not the legacy top-level `database:` key. Grafana still
+      # reads the top-level one, but every SQL datasource moved to this form and
+      # the docs for 13.x only document this one.
+      database: seismic
       sslmode: disable
       postgresVersion: 1600
