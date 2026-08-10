@@ -10,6 +10,15 @@ from jp_seismic.config import USGS_ENDPOINT
 from jp_seismic.extract import PAGE_LIMIT, fetch_events, iter_backfill_windows
 
 
+def _request_url(index: int) -> str:
+    # `responses` types the recorded URL as optional; it is never None for a
+    # call that was actually made, and asserting says so once instead of at
+    # every use.
+    url = responses.calls[index].request.url
+    assert url is not None
+    return url
+
+
 def _feature(event_id: str) -> dict:
     return {
         "type": "Feature",
@@ -24,7 +33,7 @@ def _feature(event_id: str) -> dict:
 
 
 @responses.activate
-def test_fetch_events_returns_features_from_single_page():
+def test_fetch_events_returns_features_from_single_page() -> None:
     responses.get(
         USGS_ENDPOINT,
         json={"features": [_feature("us1"), _feature("us2")]},
@@ -38,7 +47,7 @@ def test_fetch_events_returns_features_from_single_page():
 
 
 @responses.activate
-def test_fetch_events_pages_until_short_page():
+def test_fetch_events_pages_until_short_page() -> None:
     full_page = [_feature(f"us{i}") for i in range(PAGE_LIMIT)]
     responses.get(USGS_ENDPOINT, json={"features": full_page}, status=200)
     responses.get(USGS_ENDPOINT, json={"features": [_feature("last")]}, status=200)
@@ -48,36 +57,36 @@ def test_fetch_events_pages_until_short_page():
     assert len(events) == PAGE_LIMIT + 1
     assert len(responses.calls) == 2
     # FDSN offsets are 1-based; the second page must start after the first.
-    assert "offset=1&" in responses.calls[0].request.url.replace("?", "&")
-    assert f"offset={PAGE_LIMIT + 1}" in responses.calls[1].request.url
+    assert "offset=1&" in _request_url(0).replace("?", "&")
+    assert f"offset={PAGE_LIMIT + 1}" in _request_url(1)
 
 
 @responses.activate
-def test_fetch_events_treats_204_as_empty_window():
+def test_fetch_events_treats_204_as_empty_window() -> None:
     responses.get(USGS_ENDPOINT, status=204)
 
     assert fetch_events(date(2024, 1, 1), date(2024, 1, 2)) == []
 
 
 @responses.activate
-def test_fetch_events_constrains_query_to_japan_bbox():
+def test_fetch_events_constrains_query_to_japan_bbox() -> None:
     responses.get(USGS_ENDPOINT, json={"features": []}, status=200)
 
     fetch_events(date(2024, 1, 1), date(2024, 1, 2))
 
-    url = responses.calls[0].request.url
+    url = _request_url(0)
     assert "minlatitude=24.0" in url
     assert "maxlatitude=46.5" in url
     assert "minlongitude=122.0" in url
     assert "maxlongitude=154.0" in url
 
 
-def test_fetch_events_rejects_inverted_range():
+def test_fetch_events_rejects_inverted_range() -> None:
     with pytest.raises(ValueError, match="must be after"):
         fetch_events(date(2024, 2, 1), date(2024, 1, 1))
 
 
-def test_iter_backfill_windows_covers_range_without_gaps_or_overlap():
+def test_iter_backfill_windows_covers_range_without_gaps_or_overlap() -> None:
     windows = list(
         iter_backfill_windows(date(2024, 1, 1), date(2024, 3, 1), window_days=30)
     )
@@ -88,7 +97,7 @@ def test_iter_backfill_windows_covers_range_without_gaps_or_overlap():
         assert prev_end == next_start
 
 
-def test_iter_backfill_windows_clamps_final_window_to_end():
+def test_iter_backfill_windows_clamps_final_window_to_end() -> None:
     windows = list(
         iter_backfill_windows(date(2024, 1, 1), date(2024, 1, 10), window_days=30)
     )
@@ -96,6 +105,6 @@ def test_iter_backfill_windows_clamps_final_window_to_end():
     assert windows == [(date(2024, 1, 1), date(2024, 1, 10))]
 
 
-def test_iter_backfill_windows_rejects_non_positive_window():
+def test_iter_backfill_windows_rejects_non_positive_window() -> None:
     with pytest.raises(ValueError, match="at least 1"):
         list(iter_backfill_windows(date(2024, 1, 1), date(2024, 2, 1), window_days=0))
